@@ -1,0 +1,14 @@
+[build]
+  command = "npm install"
+  publish = "public"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+# Toutes les requêtes dynamiques sont envoyées à la fonction Express.
+# Les fichiers présents dans "public" (CSS, JS) sont servis directement par le CDN.
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
