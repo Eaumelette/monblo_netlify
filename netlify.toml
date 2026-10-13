@@ -1,14 +1,18 @@
 [build]
   command = "npm install"
   publish = "public"
-  functions = "netlify/functions"
 
 [functions]
-  node_bundler = "esbuild"
+  directory = "netlify/functions"
+  # Le bundler par défaut (zisi) est utilisé volontairement : esbuild convertit
+  # les dépendances CommonJS (light-my-request, @netlify/database, ...) en ESM,
+  # ce qui casse leurs "require()" dynamiques à l'exécution (erreur
+  # « Dynamic require of ... is not supported »).
+  #
+  # Les templates EJS sont lus sur le disque à l'exécution : il faut les
+  # embarquer explicitement dans le zip de la fonction.
+  included_files = ["views/**"]
 
-# Toutes les requêtes dynamiques sont envoyées à la fonction Express.
-# Les fichiers présents dans "public" (CSS, JS) sont servis directement par le CDN.
-[[redirects]]
-  from = "/*"
-  to = "/.netlify/functions/api/:splat"
-  status = 200
+# Le routage vers Express est déclaré dans la fonction elle-même
+# (netlify/functions/api.mjs : config.path = "/*", avec priorité aux fichiers
+# statiques de "public").

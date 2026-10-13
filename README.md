@@ -1,87 +1,87 @@
 # Mon Blog (Netlify)
 
-Blog **Node.js / Express / EJS / MongoDB** adapté pour un déploiement **serverless sur Netlify**.
+Blog **Node.js / Express / EJS** déployé en **serverless sur Netlify**, avec les données dans
+**Netlify Database** (Postgres géré) et les images dans **Netlify Blobs**.
 
-L'application Express est emballée dans une **Netlify Function** via [`serverless-http`](https://github.com/dougmoscrop/serverless-http).
-Aucune réécriture des vues ou des routes n'a été nécessaire : seule l'infrastructure (sessions, upload d'images, connexion à la base) a été adaptée au modèle serverless.
+L'application Express est exposée par une **Netlify Function au format moderne** (web `Request` → `Response`),
+définie dans `netlify/functions/api.mjs`. Chaque requête est rejouée sur l'application Express via
+[`light-my-request`](https://github.com/fastify/light-my-request), sans serveur Node permanent.
 
 ## Fonctionnalités
 
 - **Authentification** : inscription, connexion, déconnexion (mots de passe hachés avec bcrypt)
 - **CRUD articles** : créer, lire, modifier, supprimer
-- **Image à la une** encodée en base64 (compatible serverless, aucun stockage disque)
+- **Image à la une** stockée dans **Netlify Blobs** et servie par une route dédiée
 - **Validation** côté serveur (titre et contenu obligatoires)
 - **Vues EJS** avec layouts (header / navbar / footer)
-- **Script de seed** pour peupler la base
 
-## Différences avec la version "serveur classique"
+## Base de données
 
-| Point | Version classique | Version Netlify |
-|---|---|---|
-| Exécution | serveur Node permanent | fonction serverless (à la demande) |
-| Sessions | `MemoryStore` | **`connect-mongo`** (stockées dans MongoDB) |
-| Connexion Mongo | à chaque démarrage | **mise en cache** entre invocations (`global.__mongoose`) |
-| Upload d'image | écriture dans `public/images/` | **data URI base64** stockée en base |
-| Entrée HTTP | `bin/www` (`http.createServer`) | `netlify/functions/api.js` (`serverless-http`) |
-| Routage | Express seul | Express + redirection Netlify `/*` → fonction |
+La base est fournie par **Netlify Database** : aucune chaîne de connexion ni service externe à configurer.
+Le code l'obtient via le paquet `@netlify/database` (`getDatabase()`), disponible automatiquement dans les
+fonctions Netlify.
+
+Le schéma est décrit par les migrations SQL de `netlify/database/migrations/`, **appliquées automatiquement
+par Netlify** avant chaque mise en production (et à chaque deploy preview). La première migration crée les
+tables `users`, `blog_posts` et `sessions`, et insère des données de démonstration.
+
+> Pour faire évoluer le schéma, ajoutez un **nouveau** fichier de migration nommé
+> `<nombre>_<slug>.sql` (ne modifiez jamais une migration déjà appliquée).
+
+Les **images** ne sont pas stockées en base : elles sont rangées dans **Netlify Blobs** (store `blog-images`),
+également zero-config, et servies par la route `GET /images/:key`. La base ne conserve que le chemin
+`/images/<clé>`, ce qui garde les requêtes et les pages légères.
+
+| Point | Solution serverless |
+|---|---|
+| Sessions | stockées dans la table `sessions` (`express-session` + store maison) |
+| Upload d'image | envoyée en data URI, stockée dans **Netlify Blobs** ; seule la clé est en base |
+| Entrée HTTP | `netlify/functions/api.mjs` (format moderne Request → Response) |
+| Routage | `config.path = "/*"` avec priorité aux fichiers statiques |
+| Vues | dossier `views/` embarqué dans la fonction (`included_files`) |
+| Bundler | **zisi** (défaut) et **non** esbuild : esbuild convertirait les dépendances CJS en ESM et casserait leurs `require()` dynamiques |
 
 ## Prérequis
 
-- [Node.js](https://nodejs.org/) 18 ou plus récent
-- Une base **MongoDB Atlas** (obligatoire en production)
-- Le CLI Netlify (`npm i -g netlify-cli`) pour tester localement
+- [Node.js](https://nodejs.org/) 22 (voir `.nvmrc`)
+- Le CLI Netlify : `npm install -g netlify-cli`
+- Un projet Netlify avec **Netlify Database activée** (offre credit-based)
 
 ## Installation
 
 ```bash
-git clone https://github.com/Eaumelette/monblo_netlify.git
-cd monblo_netlify
 npm install
 cp .env.example .env
 ```
 
-Renseignez `.env` :
-
-```env
-MONGO_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/newBlog?retryWrites=true&w=majority
-SESSION_SECRET=une-chaine-longue-et-aleatoire
-NODE_ENV=development
-```
-
 ## Lancer en local
 
-Deux options :
-
 ```bash
-# 1. Serveur Node classique (http://localhost:3000)
-npm run seed      # une fois, pour les données de démo
-npm start
-
-# 2. Environnement Netlify complet, fonctions incluses (http://localhost:8888)
-netlify dev
+netlify link       # (une fois) relie le dossier au projet Netlify et à sa base
+netlify dev        # http://localhost:8888  ← recommandé
 ```
+
+`netlify dev` reproduit l'environnement Netlify (fonctions, redirections, accès à la base de données).
+Il faut donc l'utiliser plutôt que `npm start`.
+
+> `npm start` (serveur Express classique sur le port 3000) ne sert qu'aux pages **sans accès à la base**
+> (À propos, Contact, Connexion). Sans environnement Netlify, toute requête SQL échoue avec
+> `MissingDatabaseConnectionError`.
 
 ## Déploiement sur Netlify
 
-1. **Créer la base** sur [MongoDB Atlas](https://www.mongodb.com/atlas) (cluster gratuit M0).
-   Dans *Network Access*, autorisez `0.0.0.0/0` (ou les IP Netlify), et créez un utilisateur de base de données.
-2. **Pousser le code** sur GitHub / GitLab.
-3. Sur [Netlify](https://app.netlify.com) : **Add new site → Import an existing project** et sélectionnez le dépôt.
-   Netlify détecte le `netlify.toml` (publish `public`, functions `netlify/functions`).
-4. **Variables d'environnement** (Site settings → Environment variables) :
+1. **Activer Netlify Database** sur le projet (Cloud compute → Database) : c'est un prérequis.
+   Netlify Blobs, lui, ne demande aucune configuration : il est disponible automatiquement.
+2. Pousser le code sur la branche de production : Netlify installe les dépendances, applique les migrations,
+   puis publie le site.
+3. **Variables d'environnement** recommandées (Project configuration → Environment variables) :
 
    | Clé | Valeur |
    |---|---|
-   | `MONGO_URI` | votre URI Atlas |
-   | `SESSION_SECRET` | une chaîne secrète aléatoire |
+   | `SESSION_SECRET` | une chaîne secrète et aléatoire |
    | `NODE_ENV` | `production` |
 
-5. **Deploy**.
-6. **Peupler la base** (une fois) depuis votre machine, avec l'URI Atlas dans `.env` :
-
-   ```bash
-   npm run seed
-   ```
+   La connexion à la base (`NETLIFY_DB_URL`) est injectée automatiquement par Netlify : rien à définir.
 
 ### Compte de démonstration
 
@@ -106,26 +106,34 @@ netlify dev
 
 ```
 monblo_netlify/
-├── netlify.toml              # Config Netlify (build, functions, redirects)
+├── netlify.toml                     # Config Netlify (build, functions, included_files)
 ├── netlify/
-│   └── functions/api.js       # Fonction serverless (wrapper Express)
-├── bin/www                    # Serveur local (npm start)
-├── app.js                     # Configuration Express et routes
-├── seed.js                    # Peuplement de la base
-├── controllers/               # Logique des routes
-├── middleware/                # Auth, validation, redirection
-├── models/                    # Schémas Mongoose (User, BlogPost)
-├── views/                     # Templates EJS + layouts
-└── public/                    # Fichiers statiques servis par le CDN
+│   ├── functions/api.mjs            # Fonction serverless (format moderne)
+│   └── database/migrations/         # Migrations SQL appliquées au déploiement
+├── app.js                           # Configuration Express et routes
+├── bin/www                          # Serveur Express local (non utilisé en prod)
+├── db/                              # Connexion Netlify Database + store de sessions
+│   ├── index.js
+│   └── sessionStore.js
+├── lib/
+│   ├── parseImage.js                # Décodage / validation de l'image (data URI -> Buffer)
+│   └── imageStore.js                # Lecture / écriture des images dans Netlify Blobs
+├── controllers/                     # Logique des routes
+├── middleware/                      # Auth, validation, redirection
+├── models/                          # Accès aux données (User, BlogPost)
+├── views/                           # Templates EJS + layouts
+└── public/                          # Fichiers statiques servis par le CDN
 ```
 
 ## Notes techniques
 
-- **Connexion MongoDB** : mise en cache dans `global.__mongoose` pour éviter d'épuiser le pool de connexions entre invocations.
-- **Sessions** : stockées dans MongoDB (`connect-mongo`), car la mémoire de la fonction n'est pas persistante.
-- **Images** : converties en data URI côté client (FileReader) puis stockées dans le document Mongo (limite 2 Mo). Évite toute écriture disque, impossible en serverless.
-- **Cookies** : `secure` activé automatiquement quand `NODE_ENV=production` (Netlify sert en HTTPS), `trust proxy` activé pour le proxy Netlify.
-- **Limite de payload** : Netlify Functions accepte ~6 Mo par requête ; l'image est plafonnée à 2 Mo.
+- **Connexion à la base** : mise en cache dans `db/index.js` pour être réutilisée entre les invocations.
+- **Sessions** : persistées dans la table `sessions` (la mémoire d'une fonction serverless n'est pas conservée).
+- **Images** : converties en data URI côté client (`FileReader`), décodées côté serveur puis rangées dans
+  **Netlify Blobs** (store `blog-images`). La base ne garde que `/images/<clé>` ; la route `GET /images/:key`
+  les sert avec `Cache-Control: public, max-age=31536000, immutable`. Limite imposée : 2 Mo par image.
+- **Cookies** : `secure: "auto"` (activé dès que la requête arrive en HTTPS) et `trust proxy` activé pour le proxy Netlify.
+- **Payload** : Netlify Functions accepte ~6 Mo par requête (≈ 4,5 Mo après encodage base64) ; l'image est plafonnée à 2 Mo.
 
 ## Licence
 

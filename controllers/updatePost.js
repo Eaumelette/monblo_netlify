@@ -1,19 +1,6 @@
 const BlogPost = require('../models/BlogPost');
-
-const MAX_IMAGE_LENGTH = 4 * 1024 * 1024;
-
-function parseImage(value) {
-  if (!value || typeof value !== 'string') {
-    return '';
-  }
-  if (!value.startsWith('data:image/')) {
-    return '';
-  }
-  if (value.length > MAX_IMAGE_LENGTH) {
-    return '';
-  }
-  return value;
-}
+const { parseImage } = require('../lib/parseImage');
+const { putImage, deleteImage, keyFromPath } = require('../lib/imageStore');
 
 module.exports = async (req, res, next) => {
   try {
@@ -24,7 +11,7 @@ module.exports = async (req, res, next) => {
     }
 
     // Seul l'auteur peut modifier son article
-    if (blogpost.userid.toString() !== String(req.session.userId)) {
+    if (!BlogPost.isOwner(blogpost, req.session.userId)) {
       return res.redirect('/');
     }
 
@@ -35,16 +22,28 @@ module.exports = async (req, res, next) => {
       return res.redirect('/posts/' + blogpost._id + '/edit');
     }
 
-    blogpost.title = title;
-    blogpost.body = body;
-
     // Remplacement de l'image uniquement si une nouvelle image est envoyée
-    const image = parseImage(req.body.image);
-    if (image) {
-      blogpost.image = image;
+    let image = '';
+    const parsed = parseImage(req.body.image);
+    if (parsed) {
+      const key = await putImage(parsed);
+      image = '/images/' + key;
     }
 
-    await blogpost.save();
+    await BlogPost.update(blogpost._id, { title, body, image });
+
+    // L'ancienne image est supprimée une fois le remplacement enregistré
+    if (image && blogpost.image) {
+      const oldKey = keyFromPath(blogpost.image);
+      if (oldKey) {
+        try {
+          await deleteImage(oldKey);
+        } catch (error) {
+          console.error('Suppression de l\'ancienne image impossible :', error.message);
+        }
+      }
+    }
+
     res.redirect('/post/' + blogpost._id);
   } catch (error) {
     next(error);

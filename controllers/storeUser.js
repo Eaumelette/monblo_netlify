@@ -5,19 +5,14 @@ module.exports = async (req, res, next) => {
     await User.create(req.body);
     res.redirect('/');
   } catch (error) {
-    let validationErrors;
+    const validationErrors = error.validationErrors || ['Une erreur est survenue lors de l\'inscription.'];
 
-    if (error.code === 11000) {
-      // Index unique MongoDB : le nom d'utilisateur est déjà utilisé
-      validationErrors = ['Ce nom d\'utilisateur est déjà utilisé.'];
-    } else if (error.errors) {
-      validationErrors = Object.keys(error.errors).map((key) => error.errors[key].message);
-    } else {
-      validationErrors = ['Une erreur est survenue lors de l\'inscription.'];
+    if (!error.validationErrors) {
+      console.error(error);
     }
 
     req.flash('validationErrors', validationErrors);
-    req.flash('data', req.body);
+    req.flash('data', { username: req.body.username });
     res.redirect('/auth/register');
   }
 };

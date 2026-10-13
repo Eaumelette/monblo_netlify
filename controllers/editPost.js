@@ -9,7 +9,7 @@ module.exports = async (req, res, next) => {
     }
 
     // Seul l'auteur peut modifier son article
-    if (blogpost.userid.toString() !== String(req.session.userId)) {
+    if (!BlogPost.isOwner(blogpost, req.session.userId)) {
       return res.redirect('/');
     }
 

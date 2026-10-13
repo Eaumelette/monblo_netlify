@@ -5,9 +5,9 @@ const path = require('path');
 const cookieParser = require('cookie-parser');
 const logger = require('morgan');
 const session = require('express-session');
-const MongoStore = require('connect-mongo');
 const flash = require('connect-flash');
-const mongoose = require('mongoose');
+const ejs = require('ejs');
+const PostgresSessionStore = require('./db/sessionStore');
 
 const homeController = require('./controllers/home');
 const newPostController = require('./controllers/newPost');
@@ -26,40 +26,28 @@ const validationMiddleware = require('./middleware/validationMiddleware');
 const authMiddleware = require('./middleware/authMiddleware');
 const redirectIfAuthenticatedMiddleware = require('./middleware/redirectIfAuthenticatedMiddleware');
 
+const { getImage } = require('./lib/imageStore');
+
 const app = express();
+
+// Dossier racine du projet : "__dirname" n'existe pas une fois l'application
+// bundlée en module ES dans la fonction Netlify.
+const rootDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 
 // Derrière le proxy Netlify : nécessaire pour les cookies / sessions
 app.set('trust proxy', 1);
 
-// Moteur de vues
-app.set('views', path.join(__dirname, 'views'));
+// Moteur de vues. Le moteur est enregistré explicitement (sinon Express le
+// charge dynamiquement, ce qui casse une fois la fonction bundlée), et plusieurs
+// emplacements sont proposés car le dossier "views" n'est pas au même endroit
+// en local et dans la fonction déployée.
+app.engine('ejs', ejs.__express);
 app.set('view engine', 'ejs');
-
-// URI MongoDB (local en dev, MongoDB Atlas en production)
-const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/newBlog';
-
-// En environnement serverless (Netlify Functions), on met en cache la connexion
-// pour éviter d'ouvrir une nouvelle connexion à chaque invocation.
-let cached = global.__mongoose;
-if (!cached) {
-  cached = global.__mongoose = { conn: null, promise: null };
-}
-
-function connectDB() {
-  if (cached.conn) {
-    return Promise.resolve(cached.conn);
-  }
-  if (!cached.promise) {
-    cached.promise = mongoose
-      .connect(mongoUri, { serverSelectionTimeoutMS: 10000 })
-      .then((m) => {
-        console.log('Connecté à MongoDB');
-        return m;
-      });
-  }
-  cached.conn = cached.promise;
-  return cached.conn;
-}
+app.set('views', [
+  path.join(rootDir, 'views'),
+  path.join(process.cwd(), 'views'),
+  path.resolve(rootDir, '../../views')
+]);
 
 // Middlewares généraux
 app.use(logger('dev'));
@@ -67,38 +55,25 @@ app.use(express.json({ limit: '5mb' }));
 // Limite élevée : les images sont envoyées encodées en base64 dans le formulaire
 app.use(express.urlencoded({ extended: false, limit: '5mb' }));
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(rootDir, 'public')));
 
-// Sessions stockées dans MongoDB (indispensable en serverless)
+// Sessions stockées dans Netlify Database (indispensable en serverless)
 app.use(
   session({
     secret: process.env.SESSION_SECRET || 'nodejs est top',
     resave: false,
     saveUninitialized: false,
-    store: MongoStore.create({
-      mongoUrl: mongoUri,
-      collectionName: 'sessions',
-      ttl: 60 * 60 * 24
-    }),
+    store: new PostgresSessionStore(),
     cookie: {
       httpOnly: true,
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      // "auto" : cookie sécurisé dès que la requête arrive en HTTPS (cas de Netlify)
+      secure: 'auto',
       maxAge: 1000 * 60 * 60 * 24
     }
   })
 );
 app.use(flash());
-
-// S'assure que la base est connectée avant de traiter une requête
-app.use(async (req, res, next) => {
-  try {
-    await connectDB();
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
 
 // Rend l'état de connexion accessible dans toutes les vues (navbar)
 app.use((req, res, next) => {
@@ -123,6 +98,21 @@ app.post('/posts/:id/edit', authMiddleware, updatePostController);
 app.post('/posts/:id/delete', authMiddleware, deletePostController);
 app.get('/post/:id', getPostController);
 
+// Images des articles, servies depuis Netlify Blobs
+app.get('/images/:key', async (req, res, next) => {
+  try {
+    const image = await getImage(req.params.key);
+    if (!image) {
+      return res.status(404).end();
+    }
+    res.set('Content-Type', image.contentType);
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(image.data);
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Pages statiques
 app.get('/about', (req, res) => res.render('about', { title: 'À propos' }));
 app.get('/contact', (req, res) => res.render('contact', { title: 'Contact' }));
@@ -136,7 +126,8 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   console.error(err);
   res.locals.message = err.message;
-  res.locals.error = req.app.get('env') === 'development' ? err : {};
+  // Détail de l'erreur affiché uniquement en développement explicite
+  res.locals.error = process.env.NODE_ENV === 'development' ? err : {};
   res.status(err.status || 500);
   res.render('error', { title: 'Erreur' });
 });
