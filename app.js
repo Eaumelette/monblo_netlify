@@ -26,6 +26,8 @@ const validationMiddleware = require('./middleware/validationMiddleware');
 const authMiddleware = require('./middleware/authMiddleware');
 const redirectIfAuthenticatedMiddleware = require('./middleware/redirectIfAuthenticatedMiddleware');
 
+const { getImage } = require('./lib/imageStore');
+
 const app = express();
 
 // Dossier racine du projet : "__dirname" n'existe pas une fois l'application
@@ -95,6 +97,21 @@ app.get('/posts/:id/edit', authMiddleware, editPostController);
 app.post('/posts/:id/edit', authMiddleware, updatePostController);
 app.post('/posts/:id/delete', authMiddleware, deletePostController);
 app.get('/post/:id', getPostController);
+
+// Images des articles, servies depuis Netlify Blobs
+app.get('/images/:key', async (req, res, next) => {
+  try {
+    const image = await getImage(req.params.key);
+    if (!image) {
+      return res.status(404).end();
+    }
+    res.set('Content-Type', image.contentType);
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(image.data);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Pages statiques
 app.get('/about', (req, res) => res.render('about', { title: 'À propos' }));

@@ -1,7 +1,7 @@
 # Mon Blog (Netlify)
 
-Blog **Node.js / Express / EJS** déployé en **serverless sur Netlify**, avec les données stockées dans
-**Netlify Database** (Postgres entièrement géré par Netlify).
+Blog **Node.js / Express / EJS** déployé en **serverless sur Netlify**, avec les données dans
+**Netlify Database** (Postgres géré) et les images dans **Netlify Blobs**.
 
 L'application Express est exposée par une **Netlify Function au format moderne** (web `Request` → `Response`),
 définie dans `netlify/functions/api.mjs`. Chaque requête est rejouée sur l'application Express via
@@ -11,7 +11,7 @@ définie dans `netlify/functions/api.mjs`. Chaque requête est rejouée sur l'ap
 
 - **Authentification** : inscription, connexion, déconnexion (mots de passe hachés avec bcrypt)
 - **CRUD articles** : créer, lire, modifier, supprimer
-- **Image à la une** encodée en base64 (compatible serverless, aucun stockage disque)
+- **Image à la une** stockée dans **Netlify Blobs** et servie par une route dédiée
 - **Validation** côté serveur (titre et contenu obligatoires)
 - **Vues EJS** avec layouts (header / navbar / footer)
 
@@ -28,10 +28,14 @@ tables `users`, `blog_posts` et `sessions`, et insère des données de démonstr
 > Pour faire évoluer le schéma, ajoutez un **nouveau** fichier de migration nommé
 > `<nombre>_<slug>.sql` (ne modifiez jamais une migration déjà appliquée).
 
+Les **images** ne sont pas stockées en base : elles sont rangées dans **Netlify Blobs** (store `blog-images`),
+également zero-config, et servies par la route `GET /images/:key`. La base ne conserve que le chemin
+`/images/<clé>`, ce qui garde les requêtes et les pages légères.
+
 | Point | Solution serverless |
 |---|---|
 | Sessions | stockées dans la table `sessions` (`express-session` + store maison) |
-| Upload d'image | data URI base64 stockée en base |
+| Upload d'image | envoyée en data URI, stockée dans **Netlify Blobs** ; seule la clé est en base |
 | Entrée HTTP | `netlify/functions/api.mjs` (format moderne Request → Response) |
 | Routage | `config.path = "/*"` avec priorité aux fichiers statiques |
 | Vues | dossier `views/` embarqué dans la fonction (`included_files`) |
@@ -66,7 +70,8 @@ Il faut donc l'utiliser plutôt que `npm start`.
 
 ## Déploiement sur Netlify
 
-1. **Activer Netlify Database** sur le projet (Cloud compute → Database). C'est prérequis au fonctionnement.
+1. **Activer Netlify Database** sur le projet (Cloud compute → Database) : c'est un prérequis.
+   Netlify Blobs, lui, ne demande aucune configuration : il est disponible automatiquement.
 2. Pousser le code sur la branche de production : Netlify installe les dépendances, applique les migrations,
    puis publie le site.
 3. **Variables d'environnement** recommandées (Project configuration → Environment variables) :
@@ -110,7 +115,9 @@ monblo_netlify/
 ├── db/                              # Connexion Netlify Database + store de sessions
 │   ├── index.js
 │   └── sessionStore.js
-├── lib/parseImage.js                # Validation de l'image (data URI)
+├── lib/
+│   ├── parseImage.js                # Décodage / validation de l'image (data URI -> Buffer)
+│   └── imageStore.js                # Lecture / écriture des images dans Netlify Blobs
 ├── controllers/                     # Logique des routes
 ├── middleware/                      # Auth, validation, redirection
 ├── models/                          # Accès aux données (User, BlogPost)
@@ -122,7 +129,9 @@ monblo_netlify/
 
 - **Connexion à la base** : mise en cache dans `db/index.js` pour être réutilisée entre les invocations.
 - **Sessions** : persistées dans la table `sessions` (la mémoire d'une fonction serverless n'est pas conservée).
-- **Images** : converties en data URI côté client (`FileReader`) puis stockées en base (limite 2 Mo).
+- **Images** : converties en data URI côté client (`FileReader`), décodées côté serveur puis rangées dans
+  **Netlify Blobs** (store `blog-images`). La base ne garde que `/images/<clé>` ; la route `GET /images/:key`
+  les sert avec `Cache-Control: public, max-age=31536000, immutable`. Limite imposée : 2 Mo par image.
 - **Cookies** : `secure: "auto"` (activé dès que la requête arrive en HTTPS) et `trust proxy` activé pour le proxy Netlify.
 - **Payload** : Netlify Functions accepte ~6 Mo par requête (≈ 4,5 Mo après encodage base64) ; l'image est plafonnée à 2 Mo.
 

@@ -1,4 +1,5 @@
 const BlogPost = require('../models/BlogPost');
+const { deleteImage, keyFromPath } = require('../lib/imageStore');
 
 module.exports = async (req, res, next) => {
   try {
@@ -11,6 +12,16 @@ module.exports = async (req, res, next) => {
     // Seul l'auteur peut supprimer son article
     if (!BlogPost.isOwner(blogpost, req.session.userId)) {
       return res.redirect('/');
+    }
+
+    // Suppression de l'image associée (au mieux : n'empêche pas la suppression)
+    const key = keyFromPath(blogpost.image);
+    if (key) {
+      try {
+        await deleteImage(key);
+      } catch (error) {
+        console.error('Suppression de l\'image impossible :', error.message);
+      }
     }
 
     await BlogPost.remove(blogpost._id);

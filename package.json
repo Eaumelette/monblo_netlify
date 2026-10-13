@@ -12,6 +12,7 @@
     "dev:netlify": "netlify dev"
   },
   "dependencies": {
+    "@netlify/blobs": "^11.1.4",
     "@netlify/database": "^2.0.1",
     "bcryptjs": "^2.4.3",
     "connect-flash": "^0.1.1",
