@@ -1,19 +1,5 @@
 const BlogPost = require('../models/BlogPost');
-
-const MAX_IMAGE_LENGTH = 4 * 1024 * 1024;
-
-function parseImage(value) {
-  if (!value || typeof value !== 'string') {
-    return '';
-  }
-  if (!value.startsWith('data:image/')) {
-    return '';
-  }
-  if (value.length > MAX_IMAGE_LENGTH) {
-    return '';
-  }
-  return value;
-}
+const parseImage = require('../lib/parseImage');
 
 module.exports = async (req, res, next) => {
   try {
@@ -24,7 +10,7 @@ module.exports = async (req, res, next) => {
     }
 
     // Seul l'auteur peut modifier son article
-    if (blogpost.userid.toString() !== String(req.session.userId)) {
+    if (!BlogPost.isOwner(blogpost, req.session.userId)) {
       return res.redirect('/');
     }
 
@@ -35,16 +21,8 @@ module.exports = async (req, res, next) => {
       return res.redirect('/posts/' + blogpost._id + '/edit');
     }
 
-    blogpost.title = title;
-    blogpost.body = body;
-
     // Remplacement de l'image uniquement si une nouvelle image est envoyée
-    const image = parseImage(req.body.image);
-    if (image) {
-      blogpost.image = image;
-    }
-
-    await blogpost.save();
+    await BlogPost.update(blogpost._id, { title, body, image: parseImage(req.body.image) });
     res.redirect('/post/' + blogpost._id);
   } catch (error) {
     next(error);

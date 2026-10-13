@@ -9,11 +9,11 @@ module.exports = async (req, res, next) => {
     }
 
     // Seul l'auteur peut supprimer son article
-    if (blogpost.userid.toString() !== String(req.session.userId)) {
+    if (!BlogPost.isOwner(blogpost, req.session.userId)) {
       return res.redirect('/');
     }
 
-    await blogpost.deleteOne();
+    await BlogPost.remove(blogpost._id);
     res.redirect('/');
   } catch (error) {
     next(error);

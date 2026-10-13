@@ -5,10 +5,11 @@
 
 [functions]
   node_bundler = "esbuild"
+  # Les templates EJS sont lus sur le disque à l'exécution : il faut les
+  # embarquer explicitement dans la fonction.
+  included_files = ["views/**"]
+  # Modules chargés dynamiquement, laissés hors du bundle esbuild
+  external_node_modules = ["ejs"]
 
-# Toutes les requêtes dynamiques sont envoyées à la fonction Express.
-# Les fichiers présents dans "public" (CSS, JS) sont servis directement par le CDN.
-[[redirects]]
-  from = "/*"
-  to = "/.netlify/functions/api/:splat"
-  status = 200
+# Le routage vers Express est déclaré dans la fonction elle-même
+# (config.path = "/*", avec priorité aux fichiers statiques de "public").
